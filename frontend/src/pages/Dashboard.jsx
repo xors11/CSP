@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BookOpen, Award, Clock, ShieldCheck, User as UserIcon, LogOut, 
   ArrowRight, Book, CheckCircle, Search, HelpCircle, Calendar,
-  Sparkles, GraduationCap, Laptop, ChevronRight, X, Bell, AlertCircle
+  Sparkles, GraduationCap, Laptop, ChevronRight, X, Bell, AlertCircle,
+  Loader2, Users
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
