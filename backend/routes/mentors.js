@@ -11,15 +11,15 @@ router.get('/', async (req, res) => {
   try {
     const { subject, search } = req.query;
     
-    // Find users who are mentors or trial mentors and verified
+    // Find users who are mentors or trial mentors
     const query = { 
-      role: { $in: ['mentor', 'trial_mentor'] },
-      isVerifiedMentor: true
+      role: { $in: ['mentor', 'trial_mentor'] }
     };
     
     if (subject) {
-      // Direct subject match (case-insensitive regex for flexibility)
-      query.skillsToTeach = { $regex: new RegExp(subject, 'i') };
+      // Escape special regex characters in subject search
+      const escapedSubject = subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.skillsToTeach = { $regex: new RegExp(escapedSubject, 'i') };
     }
     
     if (search) {
