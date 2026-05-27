@@ -6,6 +6,7 @@ import {
   FileText, Edit3, Clock
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { API_URL } from '../config';
 
 const VerifySkill = () => {
   const [searchParams] = useSearchParams();
@@ -40,7 +41,7 @@ const VerifySkill = () => {
   useEffect(() => {
     const fetchTest = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/verify/generate?subjects=${encodeURIComponent(subjectsQuery)}&count=10&t=${Date.now()}`, {
+        const response = await fetch(`${API_URL}/api/verify/generate?subjects=${encodeURIComponent(subjectsQuery)}&count=10&t=${Date.now()}`, {
           cache: 'no-store'
         });
         const data = await response.json();
@@ -82,7 +83,7 @@ const VerifySkill = () => {
         setIsSubmitting(true);
         try {
           const user = JSON.parse(localStorage.getItem('user'));
-          const response = await fetch('http://localhost:5000/api/verify/evaluate', {
+          const response = await fetch(`${API_URL}/api/verify/evaluate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -138,7 +139,7 @@ const VerifySkill = () => {
     
     try {
       const user = JSON.parse(localStorage.getItem('user'));
-      const response = await fetch('http://localhost:5000/api/verify/evaluate', {
+      const response = await fetch(`${API_URL}/api/verify/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

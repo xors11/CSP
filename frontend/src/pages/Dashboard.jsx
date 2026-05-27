@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { API_URL } from '../config';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -121,7 +122,7 @@ const Dashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
-      const response = await fetch('http://localhost:5000/api/auth/me', {
+      const response = await fetch(`${API_URL}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -139,7 +140,7 @@ const Dashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
-      const response = await fetch('http://localhost:5000/api/notifications', {
+      const response = await fetch(`${API_URL}/api/notifications`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -157,7 +158,7 @@ const Dashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
-      const response = await fetch('http://localhost:5000/api/sessions', {
+      const response = await fetch(`${API_URL}/api/sessions`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -176,7 +177,7 @@ const Dashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) return;
-      await fetch('http://localhost:5000/api/notifications/read-all', {
+      await fetch(`${API_URL}/api/notifications/read-all`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -198,7 +199,7 @@ const Dashboard = () => {
       const token = localStorage.getItem('token');
       const scheduledAt = new Date(`${bookingForm.date}T${bookingForm.time}:00`);
       
-      const response = await fetch('http://localhost:5000/api/sessions/book', {
+      const response = await fetch(`${API_URL}/api/sessions/book`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -243,7 +244,7 @@ const Dashboard = () => {
   const handleUpdateSessionStatus = async (sessionId, status) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:5000/api/sessions/${sessionId}/status`, {
+      const response = await fetch(`${API_URL}/api/sessions/${sessionId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -276,7 +277,7 @@ const Dashboard = () => {
         try {
           const subject = selectedLearnSubjects[0];
           const token = localStorage.getItem('token');
-          const response = await fetch(`http://localhost:5000/api/mentors?subject=${encodeURIComponent(subject)}&t=${Date.now()}`, {
+          const response = await fetch(`${API_URL}/api/mentors?subject=${encodeURIComponent(subject)}&t=${Date.now()}`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
             cache: 'no-store'
           });
@@ -307,7 +308,7 @@ const Dashboard = () => {
     const token = localStorage.getItem('token');
     if (!token) return;
     
-    const socket = io('http://localhost:5000');
+    const socket = io(API_URL);
     const userId = user.id || user._id;
     if (userId) {
       socket.emit('register-user', userId);
@@ -334,7 +335,7 @@ const Dashboard = () => {
     setIsReviewSubmitting(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:5000/api/sessions/${reviewingSession._id}/review`, {
+      const response = await fetch(`${API_URL}/api/sessions/${reviewingSession._id}/review`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -457,7 +458,7 @@ const Dashboard = () => {
 
     try {
       const payloadMessages = [...doubtMessages, userMessage];
-      const response = await fetch('http://localhost:5000/api/doubts/ask', {
+      const response = await fetch(`${API_URL}/api/doubts/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -526,7 +527,7 @@ const Dashboard = () => {
   const handleSaveProfile = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/auth/profile', {
+      const response = await fetch(`${API_URL}/api/auth/profile`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',

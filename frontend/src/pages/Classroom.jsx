@@ -7,8 +7,9 @@ import {
   MicOff, VideoOff, ShieldAlert, Sparkles, Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { API_URL } from '../config';
 
-const socket = io('http://localhost:5000');
+const socket = io(API_URL);
 
 const Classroom = () => {
   const { roomId } = useParams();
@@ -63,7 +64,7 @@ const Classroom = () => {
         const token = localStorage.getItem('token');
         const sessionId = roomId.replace('room-', '');
         
-        const response = await fetch(`http://localhost:5000/api/sessions/${sessionId}/handshake`, {
+        const response = await fetch(`${API_URL}/api/sessions/${sessionId}/handshake`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -157,7 +158,7 @@ const Classroom = () => {
     try {
       const token = localStorage.getItem('token');
       const sessionId = roomId.replace('room-', '');
-      await fetch(`http://localhost:5000/api/sessions/${sessionId}/complete`, {
+      await fetch(`${API_URL}/api/sessions/${sessionId}/complete`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
