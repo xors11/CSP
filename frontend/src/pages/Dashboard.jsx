@@ -4,7 +4,7 @@ import {
   BookOpen, Award, Clock, ShieldCheck, User as UserIcon, LogOut, 
   ArrowRight, Book, CheckCircle, Search, HelpCircle, Calendar,
   Sparkles, GraduationCap, Laptop, ChevronRight, X, Bell, AlertCircle,
-  Loader2
+  Loader2, Users
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -274,6 +274,7 @@ const Dashboard = () => {
       const fetchMentorsList = async () => {
         setIsMentorsLoading(true);
         try {
+          const subject = selectedLearnSubjects[0];
           const token = localStorage.getItem('token');
           const response = await fetch(`http://localhost:5000/api/mentors?subject=${encodeURIComponent(subject)}&t=${Date.now()}`, {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
