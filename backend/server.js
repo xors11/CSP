@@ -25,12 +25,14 @@ const verifyRoutes = require('./routes/verify');
 const mentorsRoutes = require('./routes/mentors');
 const sessionsRoutes = require('./routes/sessions');
 const notificationsRoutes = require('./routes/notifications');
+const doubtRoutes = require('./routes/doubt');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/verify', verifyRoutes);
 app.use('/api/mentors', mentorsRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/doubts', doubtRoutes);
 
 // Socket.IO Logic
 io.on('connection', (socket) => {

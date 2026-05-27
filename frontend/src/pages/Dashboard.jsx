@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BookOpen, Award, Clock, ShieldCheck, User as UserIcon, LogOut, 
   ArrowRight, Book, CheckCircle, Search, HelpCircle, Calendar,
-  Sparkles, GraduationCap, Laptop, ChevronRight, X, Bell, AlertCircle
+  Sparkles, GraduationCap, Laptop, ChevronRight, X, Bell, AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -38,6 +39,13 @@ const Dashboard = () => {
       'B.Tech Machine Learning', 'B.Tech Web Development', 
       'B.Tech Operating Systems', 'B.Tech DBMS', 'B.Tech Computer Networks', 
       'B.Tech Software Engineering', 'B.Tech Java'
+    ],
+    "MBBS & Medical Sciences": [
+      'Anatomy', 'Physiology', 'Biochemistry', 'Pathology', 'Pharmacology',
+      'Microbiology', 'Forensic Medicine', 'Community Medicine', 'Ophthalmology',
+      'ENT', 'General Medicine', 'General Surgery', 'Obstetrics & Gynecology',
+      'Pediatrics', 'Orthopedics', 'Radiology', 'Dermatology', 'Psychiatry',
+      'Anesthesiology', 'Emergency Medicine'
     ],
     "Others / Humanities": [
       'Degree Economics'
@@ -88,6 +96,25 @@ const Dashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+  
+  // Clarix doubts states
+  const [doubtSubject, setDoubtSubject] = useState('');
+  const [doubtLevel, setDoubtLevel] = useState('Intermediate');
+  const [doubtSessionActive, setDoubtSessionActive] = useState(false);
+  const [doubtMessages, setDoubtMessages] = useState([]);
+  const [doubtInput, setDoubtInput] = useState('');
+  const [isDoubtSubmitting, setIsDoubtSubmitting] = useState(false);
+  const [showClarixDrawer, setShowClarixDrawer] = useState(false);
+  
+  const chatEndRef = useRef(null);
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [doubtMessages]);
+
+  const drawerChatEndRef = useRef(null);
+  useEffect(() => {
+    drawerChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [doubtMessages, showClarixDrawer]);
 
   // Reload user profile from server
   const reloadUserProfile = async () => {
@@ -271,6 +298,7 @@ const Dashboard = () => {
       fetchUserSessions();
       reloadUserProfile();
     }
+    setSelectedSubjects([]);
   }, [activeTab]);
 
   // Socket.IO Notifications Listener
@@ -348,6 +376,122 @@ const Dashboard = () => {
     }
   };
 
+  const renderStyledText = (text) => {
+    if (!text) return '';
+    const boldParts = text.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bPart, bIdx) => {
+      if (bPart.startsWith('**') && bPart.endsWith('**')) {
+        const boldVal = bPart.slice(2, -2);
+        return <strong key={bIdx} className="font-extrabold text-white">{boldVal}</strong>;
+      }
+      
+      const inlineParts = bPart.split(/(`.*?`)/g);
+      return inlineParts.map((iPart, iIdx) => {
+        if (iPart.startsWith('`') && iPart.endsWith('`')) {
+          const codeVal = iPart.slice(1, -1);
+          return (
+            <code key={iIdx} className="bg-slate-950/80 px-1.5 py-0.5 rounded font-mono text-emerald-400 border border-white/5 text-xs">
+              {codeVal}
+            </code>
+          );
+        }
+        return iPart;
+      });
+    });
+  };
+
+  const renderMessageContent = (text) => {
+    if (!text) return null;
+    const parts = text.split(/(```[\s\S]*?```)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith('```')) {
+        const match = part.match(/```(\w*)\n([\s\S]*?)```/);
+        const lang = match ? match[1] : 'code';
+        const code = match ? match[2].trim() : part.replace(/```/g, '').trim();
+        return (
+          <div key={index} className="my-4 rounded-xl overflow-hidden border border-white/5 bg-[#030014] text-left">
+            <div className="flex justify-between items-center bg-[#07051a] px-4 py-2 text-[10px] text-slate-500 border-b border-white/5 font-mono">
+              <span>solution.{lang === 'python' ? 'py' : lang === 'javascript' || lang === 'js' ? 'js' : 'txt'}</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(code);
+                    alert("Code copied to clipboard!");
+                  }}
+                  className="hover:text-emerald-400 font-bold transition-colors cursor-pointer mr-2"
+                >
+                  Copy
+                </button>
+                <span className="text-emerald-400 font-bold uppercase tracking-wider text-[9px]">{lang || 'code'}</span>
+              </div>
+            </div>
+            <pre className="p-4 font-mono text-xs sm:text-sm text-slate-300 overflow-x-auto whitespace-pre leading-relaxed">
+              <code>{code}</code>
+            </pre>
+          </div>
+        );
+      }
+      return (
+        <span key={index} className="whitespace-pre-wrap font-light">
+          {renderStyledText(part)}
+        </span>
+      );
+    });
+  };
+
+  const handleSendDoubt = async (e) => {
+    e.preventDefault();
+    if (!doubtInput.trim()) return;
+
+    const userMessage = {
+      sender: 'user',
+      text: doubtInput.trim(),
+      timestamp: new Date()
+    };
+
+    setDoubtMessages(prev => [...prev, userMessage]);
+    setDoubtInput('');
+    setIsDoubtSubmitting(true);
+
+    try {
+      const payloadMessages = [...doubtMessages, userMessage];
+      const response = await fetch('http://localhost:5000/api/doubts/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: doubtSubject,
+          level: doubtLevel,
+          messages: payloadMessages
+        })
+      });
+      const data = await response.json();
+      
+      if (response.ok && data.content) {
+        setDoubtMessages(prev => [...prev, {
+          sender: 'clarix',
+          text: data.content,
+          timestamp: new Date()
+        }]);
+      } else {
+        setDoubtMessages(prev => [...prev, {
+          sender: 'clarix',
+          text: "I want to make sure I give you the most accurate answer. Let me break this down carefully. There was an error reaching the Groq completion network.",
+          timestamp: new Date()
+        }]);
+      }
+    } catch (err) {
+      console.error(err);
+      setDoubtMessages(prev => [...prev, {
+        sender: 'clarix',
+        text: "I want to make sure I give you the most accurate answer. Let me break this down carefully. There was a network exception in our connection pipeline.",
+        timestamp: new Date()
+      }]);
+    } finally {
+      setIsDoubtSubmitting(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -361,9 +505,15 @@ const Dashboard = () => {
   };
 
   const handleSelectSubject = (subject) => {
-    setSelectedSubjects(prev => 
-      prev.includes(subject) ? prev.filter(s => s !== subject) : [...prev, subject]
-    );
+    setSelectedSubjects(prev => {
+      const nextSubjects = prev.includes(subject) ? prev.filter(s => s !== subject) : [...prev, subject];
+      if (nextSubjects.length > 0) {
+        setTimeout(() => {
+          document.getElementById('configure-btn')?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+      return nextSubjects;
+    });
   };
   
   const handleSelectLearnSubject = (subject) => {
@@ -522,7 +672,7 @@ const Dashboard = () => {
                 What would you like to achieve today? Choose a path below to access live rooms or manage credentials.
               </p>
               
-              <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto w-full relative z-10">
+              <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto w-full relative z-10">
                 
                 {/* Learn Path Card */}
                 <div 
@@ -535,10 +685,10 @@ const Dashboard = () => {
                   <div>
                     <h3 className="text-2xl font-bold mb-2 text-white">Find a Mentor</h3>
                     <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                      Browse peer mentors, join live interactive audio/video classrooms, and query expert classmates.
+                      Browse peer mentors, join live classrooms, and query classmates.
                     </p>
                   </div>
-                  <span className="text-indigo-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all">
+                  <span className="text-indigo-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all font-mono">
                     Search Mentors <ArrowRight size={14} />
                   </span>
                 </div>
@@ -554,11 +704,30 @@ const Dashboard = () => {
                   <div>
                     <h3 className="text-2xl font-bold mb-2 text-white">Verify to Teach</h3>
                     <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                      Verify your proficiency in school or college courses using our AI engine, earn status, and assist others.
+                      Verify your proficiency in courses using our AI engine, earn status, and assist others.
                     </p>
                   </div>
-                  <span className="text-purple-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all">
+                  <span className="text-purple-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all font-mono">
                     Start AI Evaluation <ArrowRight size={14} />
+                  </span>
+                </div>
+
+                {/* Clarix Doubts Card */}
+                <div 
+                  onClick={() => { setActiveTab('doubts'); setSearchTerm(''); }}
+                  className="glass-panel p-8 flex flex-col justify-between items-start text-left cursor-pointer group hover:bg-emerald-950/20 border-white/5 hover:border-emerald-500/40 shadow-lg"
+                >
+                  <div className="bg-emerald-500/10 w-14 h-14 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-300">
+                    <Sparkles size={28} className="text-emerald-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-bold mb-2 text-white">Ask Clarix AI</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-6">
+                      Clear doubts instantly, learn academic formulas, step-by-step proofs, and get explained code snippets.
+                    </p>
+                  </div>
+                  <span className="text-emerald-400 text-sm font-semibold flex items-center gap-1 group-hover:gap-2 transition-all font-mono">
+                    Consult AI Mentor <ArrowRight size={14} />
                   </span>
                 </div>
               </div>
@@ -643,14 +812,16 @@ const Dashboard = () => {
                         return (
                           <div 
                             key={subject}
-                            onClick={() => !isVerified && handleSelectSubject(subject)}
-                            className={`subject-card p-4 transition-all text-left min-h-[80px]
+                            onClick={() => handleSelectSubject(subject)}
+                            className={`subject-card p-4 transition-all text-left min-h-[80px] relative cursor-pointer
                               ${isSelected ? 'selected' : ''} 
-                              ${isVerified ? 'opacity-60 cursor-not-allowed border-emerald-500/30 bg-emerald-950/5' : 'cursor-pointer hover:border-indigo-500/30'}`}
+                              ${isVerified 
+                                ? 'border-emerald-500/20 bg-emerald-950/5 hover:border-emerald-500/40' 
+                                : 'border-white/5 hover:border-indigo-500/30'}`}
                           >
                             <span className="font-semibold text-xs sm:text-sm text-slate-200 leading-tight pr-4">{subject}</span>
                             
-                            {isVerified && (
+                            {isVerified && !isSelected && (
                               <div className="absolute top-3 right-3 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-full p-1 shadow-sm" title="Verified Skill">
                                 <CheckCircle size={12} />
                               </div>
@@ -661,6 +832,18 @@ const Dashboard = () => {
                                 <CheckCircle size={12} />
                               </div>
                             )}
+
+                            {isSelected && isVerified && (
+                              <div className="absolute top-3 right-3 bg-emerald-500 text-white rounded-full p-0.5 shadow-md">
+                                <CheckCircle size={10} />
+                              </div>
+                            )}
+
+                            {isVerified && (
+                              <span className="absolute bottom-2 right-3 text-[8px] font-bold text-emerald-400 uppercase tracking-wider">
+                                Already Verified (Retake)
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -669,17 +852,25 @@ const Dashboard = () => {
                 ))}
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-900/40 border border-white/5 p-4 rounded-2xl">
-                <p className="text-xs text-slate-400 max-w-md text-center sm:text-left">
-                  You can choose multiple subjects to evaluate concurrently. Pass with &gt;70% to unlock teaching abilities and acquire credits.
-                </p>
-                <button 
-                  onClick={handleStartVerification}
-                  disabled={selectedSubjects.length === 0}
-                  className={`btn-primary px-8 py-3.5 text-sm w-full sm:w-auto ${selectedSubjects.length === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
-                >
-                  Configure AI Assessment ({selectedSubjects.length}) <ChevronRight size={16} />
-                </button>
+              <div id="configure-btn" className="flex flex-col gap-3 bg-slate-900/40 border border-white/5 p-5 rounded-2xl">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <p className="text-xs text-slate-400 max-w-md text-center sm:text-left">
+                    You can choose multiple subjects to evaluate concurrently. Pass with &gt;70% to unlock teaching abilities and acquire credits.
+                  </p>
+                  <button 
+                    onClick={handleStartVerification}
+                    disabled={selectedSubjects.length === 0}
+                    className={`btn-primary px-8 py-3.5 text-sm w-full sm:w-auto cursor-pointer ${selectedSubjects.length === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    Configure AI Assessment ({selectedSubjects.length}) <ChevronRight size={16} />
+                  </button>
+                </div>
+                {selectedSubjects.some(sub => user.skillsToTeach?.includes(sub)) && (
+                  <div className="text-left text-[10px] text-emerald-400 bg-emerald-500/5 border border-emerald-500/10 px-3 py-2 rounded-lg flex items-center gap-2 mt-1 animate-pulse">
+                    <ShieldCheck size={12} className="shrink-0" />
+                    <span>You have selected subjects you already verified. Reattempting will allow you to update your accreditation.</span>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1007,6 +1198,196 @@ const Dashboard = () => {
               )}
             </motion.div>
           )}
+
+          {/* Clarix doubts workspace */}
+          {activeTab === 'doubts' && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h1 className="text-3xl font-black text-white">Ask Clarix AI 🧙‍♂️</h1>
+                  <p className="text-slate-400 text-sm mt-1">Acquire step-by-step academic clarifications from your personalized mentor.</p>
+                </div>
+                <button 
+                  onClick={() => { setActiveTab('selection'); setDoubtSessionActive(false); }} 
+                  className="text-indigo-400 hover:text-indigo-300 text-sm font-semibold cursor-pointer"
+                >
+                  Back to Options
+                </button>
+              </div>
+
+              {!doubtSessionActive ? (
+                /* Doubts Setup Portal Card */
+                <div className="glass-panel p-8 bg-slate-900/20 max-w-2xl mx-auto border-white/5 space-y-6">
+                  <div className="text-center mb-6">
+                    <div className="inline-flex bg-emerald-500/10 p-4 rounded-full mb-4 border border-emerald-500/20">
+                      <Sparkles className="text-emerald-400" size={32} />
+                    </div>
+                    <h3 className="text-xl font-bold text-white">Configure Your Academic Mentor</h3>
+                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto font-light leading-relaxed">
+                      Select your target course and understanding level. Clarix will automatically tailor explanations to your exact proficiency.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Subject Selector */}
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2 font-mono">Select Course / Topic</label>
+                      <select 
+                        value={doubtSubject} 
+                        onChange={e => setDoubtSubject(e.target.value)}
+                        className="w-full bg-slate-950 border border-white/5 focus:border-indigo-500 rounded-xl px-4 py-3.5 text-xs sm:text-sm font-medium text-slate-200 focus:outline-none"
+                      >
+                        <option value="">-- Choose a Subject --</option>
+                        {subjectsList.map(subj => (
+                          <option key={subj} value={subj}>{subj}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Understanding Level */}
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2 font-mono">Current Understanding Level</label>
+                      <div className="grid grid-cols-3 gap-3">
+                        {['Beginner', 'Intermediate', 'Advanced'].map(lvl => (
+                          <div 
+                            key={lvl}
+                            onClick={() => setDoubtLevel(lvl)}
+                            className={`p-3.5 rounded-xl border text-center text-xs font-bold cursor-pointer transition-all
+                              ${doubtLevel === lvl 
+                                ? 'bg-emerald-600/25 border-emerald-500 text-emerald-200' 
+                                : 'bg-slate-950/40 border-white/5 text-slate-500 hover:border-white/10 hover:text-slate-300'}`}
+                          >
+                            {lvl}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-2 font-light italic leading-normal">
+                        {doubtLevel === 'Beginner' ? '★ Beginner style focuses on simple analogies, basic definitions, and zero jargon.' : 
+                         doubtLevel === 'Intermediate' ? '★★ Intermediate style handles conceptual trade-offs, structural layouts, and flow.' : 
+                         '★★★ Advanced style keeps explanations optimal, FAANG interview-ready, and highly technical.'}
+                      </p>
+                    </div>
+
+                    {/* Submit Setup */}
+                    <button 
+                      onClick={() => {
+                        if (!doubtSubject) {
+                          alert('Please select a subject first!');
+                          return;
+                        }
+                        setDoubtMessages([
+                          {
+                            sender: 'clarix',
+                            text: `Hi! I'm Clarix, your personal mentor for ${doubtSubject}. What would you like to learn today?`,
+                            timestamp: new Date()
+                          }
+                        ]);
+                        setDoubtSessionActive(true);
+                      }}
+                      className="w-full btn-primary py-3.5 text-sm font-bold rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 shadow-[0_0_20px_rgba(16,185,129,0.2)] text-white font-sans mt-4 cursor-pointer"
+                    >
+                      Connect with Clarix
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Active Chat Console Workspace */
+                <div className="glass-panel flex flex-col h-[65vh] bg-[#030014]/60 border-white/5 shadow-2xl rounded-3xl overflow-hidden">
+                  
+                  {/* Chatroom header */}
+                  <div className="flex justify-between items-center bg-[#07051a] px-6 py-4 border-b border-white/5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-emerald-500/10 rounded-xl border border-emerald-500/20 flex items-center justify-center font-bold text-emerald-400 font-sans">
+                        CX
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          Clarix AI Mentor 
+                          <span className="flex items-center gap-1.5 text-[9px] font-extrabold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-2 py-0.5 rounded font-mono">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Online
+                          </span>
+                        </h4>
+                        <p className="text-[10px] text-slate-400 font-light mt-0.5">
+                          Tuning: <span className="text-slate-300 font-semibold">{doubtSubject}</span> • Level: <span className="text-emerald-400 font-semibold">{doubtLevel}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => setDoubtSessionActive(false)} 
+                      className="text-slate-500 hover:text-rose-400 text-xs font-semibold underline cursor-pointer"
+                    >
+                      End doubts Session
+                    </button>
+                  </div>
+
+                  {/* Messages list */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4 font-sans text-sm">
+                    {doubtMessages.map((m, mIdx) => (
+                      <div 
+                        key={mIdx}
+                        className={`flex gap-3 max-w-[85%] ${m.sender === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
+                      >
+                        {/* Avatar */}
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shrink-0
+                          ${m.sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-400'}`}>
+                          {m.sender === 'user' ? user.name.charAt(0).toUpperCase() : 'C'}
+                        </div>
+                        
+                        {/* Bubble */}
+                        <div className={`p-4 rounded-2xl leading-relaxed font-light border text-xs sm:text-sm
+                          ${m.sender === 'user' 
+                            ? 'bg-indigo-600/10 border-indigo-500/20 text-indigo-100 rounded-tr-none whitespace-pre-wrap' 
+                            : 'bg-slate-950/40 border-white/5 text-slate-300 rounded-tl-none'}`}>
+                          
+                          {m.sender === 'user' ? m.text : renderMessageContent(m.text)}
+                          
+                          <span className="text-[9px] text-slate-500 mt-2 block font-mono text-right">
+                            {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Loader */}
+                    {isDoubtSubmitting && (
+                      <div className="flex gap-3 max-w-[80%]">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center font-bold text-emerald-400 shrink-0 animate-pulse">
+                          C
+                        </div>
+                        <div className="bg-slate-950/40 border border-white/5 p-4 rounded-2xl rounded-tl-none text-slate-500 text-xs sm:text-sm flex items-center gap-2">
+                          <Loader2 className="animate-spin text-emerald-400" size={14} />
+                          <span>Clarix is constructing response vectors...</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Input form */}
+                  <form onSubmit={handleSendDoubt} className="p-4 border-t border-white/5 bg-[#07051a]/40 flex gap-3">
+                    <input 
+                      type="text" 
+                      value={doubtInput}
+                      onChange={e => setDoubtInput(e.target.value)}
+                      disabled={isDoubtSubmitting}
+                      placeholder={`Ask Clarix about ${doubtSubject}...`}
+                      className="flex-1 bg-slate-950 border border-white/5 focus:border-indigo-500 focus:outline-none rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-200 font-medium transition-all"
+                    />
+                    <button 
+                      type="submit"
+                      disabled={isDoubtSubmitting || !doubtInput.trim()}
+                      className="btn-primary py-3 px-6 text-xs sm:text-sm font-bold bg-gradient-to-r from-emerald-500 to-teal-600 shadow-md shadow-emerald-500/10 text-white rounded-xl cursor-pointer disabled:opacity-40"
+                    >
+                      Send Question
+                    </button>
+                  </form>
+
+                </div>
+              )}
+            </motion.div>
+          )}
         </main>
 
         {/* Sidebar Container */}
@@ -1054,6 +1435,13 @@ const Dashboard = () => {
                 className="w-full btn-secondary py-2.5 text-xs mt-2 font-semibold hover:bg-white/10"
               >
                 Edit Preferences
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('doubts')} 
+                className="w-full btn-secondary py-2.5 text-xs mt-2 font-semibold border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/5 hover:border-emerald-500/40 flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+              >
+                <Sparkles size={14} className="text-emerald-400" /> Consult Clarix AI
               </button>
             </div>
           </motion.div>
@@ -1382,6 +1770,234 @@ const Dashboard = () => {
               </form>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Clarix FAB */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+        <button
+          onClick={() => setShowClarixDrawer(!showClarixDrawer)}
+          className="w-14 h-14 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 rounded-full flex items-center justify-center shadow-[0_0_25px_rgba(16,185,129,0.4)] text-white hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer relative"
+          title="Ask Clarix AI Copilot"
+        >
+          {/* Pulsing indicator */}
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-slate-950 flex items-center justify-center"></span>
+          </span>
+          <Sparkles className="animate-pulse" size={24} />
+        </button>
+      </div>
+
+      {/* Clarix AI Slide-out Drawer */}
+      <AnimatePresence>
+        {showClarixDrawer && (
+          <>
+            {/* Backdrop Overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowClarixDrawer(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50"
+            />
+
+            {/* Slide-out Panel */}
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed top-0 right-0 h-full w-[420px] sm:w-[500px] bg-[#030014]/98 border-l border-white/10 z-50 shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col"
+            >
+              {/* Drawer Header */}
+              <div className="flex justify-between items-center bg-[#07051a] px-6 py-4 border-b border-white/5">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-emerald-500/10 rounded-xl border border-emerald-500/20 flex items-center justify-center font-bold text-emerald-400">
+                    CX
+                  </div>
+                  <div className="text-left">
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      Clarix AI Copilot 🧙‍♂️
+                      <span className="flex items-center gap-1 text-[8px] font-extrabold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-1.5 py-0.5 rounded">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Online
+                      </span>
+                    </h4>
+                    <p className="text-[10px] text-slate-400">Your persistent learning assistant</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowClarixDrawer(false)}
+                  className="text-slate-400 hover:text-white transition-colors cursor-pointer p-1 hover:bg-white/5 rounded-lg"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Drawer Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {!doubtSessionActive ? (
+                  /* Setup portal inside drawer */
+                  <div className="glass-panel p-6 bg-slate-900/20 border-white/5 space-y-6 text-left">
+                    <div className="text-center">
+                      <div className="inline-flex bg-emerald-500/10 p-3 rounded-full mb-3 border border-emerald-500/20">
+                        <Sparkles className="text-emerald-400" size={24} />
+                      </div>
+                      <h3 className="text-lg font-bold text-white">Configure Academic Mentor</h3>
+                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                        Select a topic and Clarix will automatically tailor all chat responses to your selected understanding level.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Subject Selector */}
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5 font-mono">Select Course</label>
+                        <select 
+                          value={doubtSubject} 
+                          onChange={e => setDoubtSubject(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/5 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-200 focus:outline-none"
+                        >
+                          <option value="">-- Choose a Subject --</option>
+                          {subjectsList.map(subj => (
+                            <option key={subj} value={subj}>{subj}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Understanding Level */}
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5 font-mono">Understanding Level</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {['Beginner', 'Intermediate', 'Advanced'].map(lvl => (
+                            <div 
+                              key={lvl}
+                              onClick={() => setDoubtLevel(lvl)}
+                              className={`py-2 rounded-lg border text-center text-[10px] font-bold cursor-pointer transition-all
+                                ${doubtLevel === lvl 
+                                  ? 'bg-emerald-600/25 border-emerald-500 text-emerald-200' 
+                                  : 'bg-slate-950/40 border-white/5 text-slate-500 hover:border-white/10 hover:text-slate-300'}`}
+                            >
+                              {lvl}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          if (!doubtSubject) {
+                            alert('Please select a subject first!');
+                            return;
+                          }
+                          setDoubtMessages([
+                            {
+                              sender: 'clarix',
+                              text: `Hi! I'm Clarix, your personal mentor for ${doubtSubject}. What would you like to learn today?`,
+                              timestamp: new Date()
+                            }
+                          ]);
+                          setDoubtSessionActive(true);
+                        }}
+                        className="w-full btn-primary py-3 text-xs font-bold rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 shadow-[0_0_20px_rgba(16,185,129,0.2)] text-white mt-4 cursor-pointer"
+                      >
+                        Connect with Clarix
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Chat Room View inside drawer */
+                  <div className="flex flex-col h-full space-y-4 text-left font-sans text-xs">
+                    {/* Level Details Badge Header */}
+                    <div className="p-3 rounded-xl bg-[#07051a] border border-white/5 flex justify-between items-center text-[10px]">
+                      <span className="text-slate-400">Subject: <strong className="text-slate-200">{doubtSubject}</strong></span>
+                      <span className="bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 px-2 py-0.5 rounded font-bold uppercase tracking-wider text-[9px]">{doubtLevel}</span>
+                    </div>
+
+                    {/* Messages Panel inside Drawer */}
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-[45vh] max-h-[65vh]">
+                      {doubtMessages.map((m, mIdx) => (
+                        <div 
+                          key={mIdx}
+                          className={`flex gap-2 max-w-[90%] ${m.sender === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
+                        >
+                          {/* Avatar */}
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shrink-0
+                            ${m.sender === 'user' ? 'bg-indigo-600 text-white' : 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-400'}`}>
+                            {m.sender === 'user' ? user.name.charAt(0).toUpperCase() : 'C'}
+                          </div>
+                          
+                          {/* Bubble */}
+                          <div className={`p-3 rounded-xl leading-relaxed font-light border text-xs
+                            ${m.sender === 'user' 
+                              ? 'bg-indigo-600/10 border-indigo-500/20 text-indigo-100 rounded-tr-none whitespace-pre-wrap' 
+                              : 'bg-slate-950/40 border-white/5 text-slate-300 rounded-tl-none'}`}>
+                            
+                            {m.sender === 'user' ? m.text : renderMessageContent(m.text)}
+                            
+                            <span className="text-[8px] text-slate-500 mt-1.5 block font-mono text-right">
+                              {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {isDoubtSubmitting && (
+                        <div className="flex gap-2 max-w-[85%]">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center font-bold text-emerald-400 shrink-0 animate-pulse">
+                            C
+                          </div>
+                          <div className="bg-slate-950/40 border border-white/5 p-3 rounded-xl rounded-tl-none text-slate-500 text-xs flex items-center gap-2">
+                            <Loader2 className="animate-spin text-emerald-400" size={12} />
+                            <span>Constructing response...</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div ref={drawerChatEndRef} />
+                    </div>
+
+                    {/* Input form inside Drawer */}
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendDoubt(e);
+                      }} 
+                      className="p-2 border border-white/5 bg-[#07051a]/40 flex gap-2 rounded-xl mt-4"
+                    >
+                      <input 
+                        type="text" 
+                        value={doubtInput}
+                        onChange={e => setDoubtInput(e.target.value)}
+                        disabled={isDoubtSubmitting}
+                        placeholder={`Ask Clarix...`}
+                        className="flex-1 bg-slate-950 border border-white/5 focus:border-indigo-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-slate-200 font-medium transition-all"
+                      />
+                      <button 
+                        type="submit"
+                        disabled={isDoubtSubmitting || !doubtInput.trim()}
+                        className="py-2 px-4 text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-600 shadow-md shadow-emerald-500/10 text-white rounded-lg cursor-pointer disabled:opacity-40"
+                      >
+                        Send
+                      </button>
+                    </form>
+
+                    <div className="text-center pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDoubtSessionActive(false);
+                        }}
+                        className="text-rose-400/70 hover:text-rose-400 text-[10px] font-semibold underline cursor-pointer"
+                      >
+                        Reset Doubt Session
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>
