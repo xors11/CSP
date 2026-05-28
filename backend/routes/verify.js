@@ -572,28 +572,23 @@ router.get('/generate', async (req, res) => {
 
   console.log(`[COUNT] Subject: "${subjects}" | Category: ${category} | Requested: ${req.query.count || '(default)'} | Final: ${count}`);
 
-  try {
-    if (!process.env.GROQ_API_KEY) {
-      console.log('No GROQ_API_KEY found, falling back to DB...');
-      const dbResult = await getQuestionsFromDB(subjects, count);
-      return res.status(200).json(dbResult);
-    }
-
-    const systemPrompt = buildSystemPrompt(subjects, count);
-
-    // User instruction tailored per category
+  // Helper: call Groq for a single batch of questions
+  async function fetchBatchFromGroq(batchCount, batchIndex, totalBatches) {
+    const systemPrompt = buildSystemPrompt(subjects, batchCount);
     const typeInstruction = {
       medical: `40% Case-Based, 25% MCQ, 20% Image-Based, 15% Theory. Every question must be clinically accurate and reference a standard textbook. DO NOT generate any Coding questions.`,
       coding: `40% Coding (with constraints, edge cases, complexity), 30% MCQ, 20% Theory, 10% Fill-in-the-blank. At least 40% must be Coding type.`,
       science: `40% Numerical (step-by-step solutions), 30% MCQ, 20% Theory, 10% Fill-in-the-blank. DO NOT generate any Coding questions.`,
       other: `50% MCQ, 25% Theory, 15% Case-Based, 10% Fill-in-the-blank. DO NOT generate any Coding questions.`
     }[category];
-
+    const batchNote = totalBatches > 1
+      ? ` This is batch ${batchIndex + 1} of ${totalBatches}. Generate COMPLETELY DIFFERENT questions from other batches — no repeated topics, scenarios, or concepts.`
+      : '';
     const messages = [
       { role: 'system', content: systemPrompt },
       {
         role: 'user',
-        content: `Generate exactly ${count} questions EXCLUSIVELY about "${subjects}". ` +
+        content: `Generate exactly ${batchCount} questions EXCLUSIVELY about "${subjects}".${batchNote} ` +
           `Follow the type distribution strictly: ${typeInstruction} ` +
           `Section distribution: 30% easy, 50% medium, 20% hard. ` +
           `Every single question must be 100% about "${subjects}" only — no overlap with any other subject. ` +
@@ -601,37 +596,91 @@ router.get('/generate', async (req, res) => {
           `Output ONLY valid JSON — no markdown, no backticks, no preamble.`
       }
     ];
-
-    console.log(`[${category.toUpperCase()}] Requesting ${count} questions from Groq for: "${subjects}"...`);
+    console.log(`[BATCH ${batchIndex + 1}/${totalBatches}] Requesting ${batchCount} questions from Groq for: "${subjects}"...`);
     const content = await callGroq(messages, true);
-
-    // Parse response safely
     let cleaned = content.trim();
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '');
     }
-
     const parsed = JSON.parse(cleaned);
-
-    // Post-process: strip any Coding questions that slipped through for non-coding subjects
-    if (category !== 'coding' && parsed.questions && Array.isArray(parsed.questions)) {
-      const hasCoding = parsed.questions.some(q => q.type === 'Coding');
+    let batchQs = parsed.questions || [];
+    // Strip any Coding questions that slipped through for non-coding subjects
+    if (category !== 'coding') {
+      const hasCoding = batchQs.some(q => q.type === 'Coding');
       if (hasCoding) {
-        parsed.questions = sanitizeNonCodingSubject(parsed.questions, subjects);
-        parsed.total_time_seconds = parsed.questions.reduce((sum, q) => sum + (q.time_limit_seconds || 180), 0);
-        console.log(`[SANITIZE] Removed Coding questions from "${category}" subject "${subjects}".`);
+        batchQs = sanitizeNonCodingSubject(batchQs, subjects);
+        console.log(`[SANITIZE] Removed Coding questions from "${category}" subject "${subjects}" in batch ${batchIndex + 1}.`);
+      }
+    }
+    return batchQs;
+  }
+
+  try {
+    if (!process.env.GROQ_API_KEY) {
+      console.log('No GROQ_API_KEY found, falling back to DB...');
+      const dbResult = await getQuestionsFromDB(subjects, count);
+      return res.status(200).json(dbResult);
+    }
+
+    // ─── BATCHED GROQ STRATEGY ────────────────────────────────────────────────
+    // Split large requests (> 30 questions) into multiple Groq calls of ≤ 30 each.
+    // This ensures the AI stays focused and produces high-quality questions for
+    // all test modes including Mock Exam (100 questions).
+    const BATCH_SIZE = 30;
+    let allQuestions = [];
+
+    if (count <= BATCH_SIZE) {
+      try {
+        const batchQs = await fetchBatchFromGroq(count, 0, 1);
+        allQuestions = batchQs;
+      } catch (err) {
+        console.error(`[BATCH] Groq call failed: ${err.message}. Falling back to DB...`);
+        const dbResult = await getQuestionsFromDB(subjects, count);
+        return res.status(200).json(dbResult);
+      }
+    } else {
+      const batches = [];
+      let remaining = count;
+      while (remaining > 0) { batches.push(Math.min(BATCH_SIZE, remaining)); remaining -= BATCH_SIZE; }
+      console.log(`[BATCH] Splitting ${count} questions into ${batches.length} batches: [${batches.join(', ')}]`);
+      for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+        const batchCount = batches[bIdx];
+        try {
+          const batchQs = await fetchBatchFromGroq(batchCount, bIdx, batches.length);
+          const offset = allQuestions.length;
+          batchQs.forEach((q, i) => { q.id = offset + i + 1; });
+          allQuestions.push(...batchQs);
+          console.log(`[BATCH ${bIdx + 1}/${batches.length}] Got ${batchQs.length} questions. Total: ${allQuestions.length}`);
+        } catch (err) {
+          console.error(`[BATCH ${bIdx + 1}/${batches.length}] Failed: ${err.message}. Padding with JS fallback...`);
+          const padQs = generateJSFallbackQuestions(subjects, batchCount, allQuestions.length + 1);
+          allQuestions.push(...padQs);
+        }
       }
     }
 
-    // Ensure sections field is present
-    if (!parsed.sections) {
-      const easy = parsed.questions ? parsed.questions.filter(q => q.difficulty === 'easy').length : 0;
-      const medium = parsed.questions ? parsed.questions.filter(q => q.difficulty === 'medium').length : 0;
-      const hard = parsed.questions ? parsed.questions.filter(q => q.difficulty === 'hard').length : 0;
-      parsed.sections = { foundation: easy, applied: medium, advanced: hard };
+    // Safety pad if still short
+    if (allQuestions.length < count) {
+      const missing = count - allQuestions.length;
+      console.log(`[PAD] Got ${allQuestions.length}/${count}. Padding ${missing} with JS fallback...`);
+      const padQs = generateJSFallbackQuestions(subjects, missing, allQuestions.length + 1);
+      allQuestions.push(...padQs);
     }
+    allQuestions = allQuestions.slice(0, count);
 
-    res.status(200).json(parsed);
+    const easyCount = allQuestions.filter(q => q.difficulty === 'easy').length;
+    const mediumCount = allQuestions.filter(q => q.difficulty === 'medium').length;
+    const hardCount = allQuestions.filter(q => q.difficulty === 'hard').length;
+    const total_time_seconds = allQuestions.reduce((sum, q) => sum + (q.time_limit_seconds || 90), 0);
+
+    console.log(`[GENERATE COMPLETE] Subject: "${subjects}" | Questions: ${allQuestions.length} | Time: ${total_time_seconds}s`);
+    res.status(200).json({
+      subject: subjects,
+      total_questions: allQuestions.length,
+      total_time_seconds,
+      sections: { foundation: easyCount, applied: mediumCount, advanced: hardCount },
+      questions: allQuestions
+    });
   } catch (error) {
     console.error('Error generating dynamic AI test, falling back to DB:', error);
     try {
@@ -649,6 +698,18 @@ router.post('/evaluate', async (req, res) => {
   try {
     const { userId, skills, questions, answers, timeTakenSeconds } = req.body;
     const subject = (skills && skills[0]) || 'General';
+
+    // Calculate attempt number and generate unique session ID
+    let attempt_number = 1;
+    const session_id = 'sess_' + require('crypto').randomBytes(8).toString('hex') + '_' + Date.now();
+    if (userId && userId !== 'mock' && mongoose.Types.ObjectId.isValid(userId)) {
+      try {
+        const prevCount = await VerificationAttempt.countDocuments({ user_id: userId, subject });
+        attempt_number = prevCount + 1;
+      } catch (err) {
+        console.error('[EVALUATE] Error calculating attempt number:', err);
+      }
+    }
 
     // --- Build not-attempted tracking ---
     const attemptedIds = new Set();
@@ -815,6 +876,22 @@ OUTPUT: Return ONLY valid JSON matching this exact schema:
           cleaned = cleaned.replace(/^```(json)?\n?/, '').replace(/\n?```$/, '');
         }
         evaluationResult = JSON.parse(cleaned);
+        // Enrich question_review items with original question fields (options, case, image_description, given)
+        if (evaluationResult && Array.isArray(evaluationResult.question_review)) {
+          evaluationResult.question_review = evaluationResult.question_review.map(qr => {
+            const originalQ = questions.find(q => q.id === qr.id);
+            if (originalQ) {
+              return {
+                ...qr,
+                options: originalQ.options || null,
+                case: originalQ.case || null,
+                image_description: originalQ.image_description || null,
+                given: originalQ.given || null
+              };
+            }
+            return qr;
+          });
+        }
         console.log(`[EVALUATE] Groq grading complete. Score: ${evaluationResult?.result_summary?.percentage}%`);
       } catch (err) {
         console.error('[EVALUATE] Groq grading failed, falling back to local grader:', err.message);
@@ -875,6 +952,10 @@ OUTPUT: Return ONLY valid JSON matching this exact schema:
           type: q.type,
           difficulty: q.difficulty,
           question: q.question,
+          options: q.options || null,
+          case: q.case || null,
+          image_description: q.image_description || null,
+          given: q.given || null,
           user_answer: isAttempted ? userAns : null,
           correct_answer: q.answer,
           is_correct: isCorrect,
@@ -1014,6 +1095,32 @@ OUTPUT: Return ONLY valid JSON matching this exact schema:
       responsePayload.user = { id: userId || 'mock', name: 'Guest/Mock User', role: roleUpdate, credits: 100, skillsToTeach: skills, preferredLanguage: 'English', availableTimings: [] };
     }
 
+    // --- Persist attempt to MongoDB ---
+    if (userId && userId !== 'mock' && mongoose.Types.ObjectId.isValid(userId)) {
+      try {
+        const attempt = new VerificationAttempt({
+          session_id,
+          user_id: userId,
+          subject,
+          attempt_number,
+          attempted_at: new Date(),
+          result_summary: evaluationResult.result_summary,
+          question_review: evaluationResult.question_review,
+          topic_analysis: evaluationResult.topic_analysis,
+          difficulty_analysis: evaluationResult.difficulty_analysis,
+          mistake_pattern: evaluationResult.mistake_pattern,
+          improvement_plan: evaluationResult.improvement_plan
+        });
+        await attempt.save();
+        console.log(`[EVALUATE] Saved attempt #${attempt_number} for user ${userId} (session: ${session_id})`);
+        // Include attempt metadata in response so frontend can display it
+        responsePayload.evaluationResult.attempt_number = attempt_number;
+        responsePayload.evaluationResult.session_id = session_id;
+      } catch (dbErr) {
+        console.error('[EVALUATE] Failed to save attempt to MongoDB:', dbErr);
+      }
+    }
+
     res.status(finalScore >= 60 ? 200 : 400).json(responsePayload);
   } catch (error) {
     console.error('[EVALUATE] Fatal error:', error);
@@ -1021,5 +1128,31 @@ OUTPUT: Return ONLY valid JSON matching this exact schema:
   }
 });
 
-module.exports = router;
+// Get all verification attempts for a user (optionally filtered by subject)
+router.get('/attempts', async (req, res) => {
+  try {
+    const { userId, subject } = req.query;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    const filter = { user_id: userId };
+    if (subject) filter.subject = subject;
+    const attempts = await VerificationAttempt.find(filter).sort({ attempted_at: -1 });
+    res.json(attempts);
+  } catch (err) {
+    console.error('[GET ATTEMPTS] Error:', err);
+    res.status(500).json({ message: 'Server error retrieving attempts' });
+  }
+});
 
+// Get a single verification attempt by sessionId
+router.get('/attempts/:sessionId', async (req, res) => {
+  try {
+    const attempt = await VerificationAttempt.findOne({ session_id: req.params.sessionId });
+    if (!attempt) return res.status(404).json({ message: 'Attempt not found' });
+    res.json(attempt);
+  } catch (err) {
+    console.error('[GET ATTEMPT DETAILS] Error:', err);
+    res.status(500).json({ message: 'Server error retrieving attempt details' });
+  }
+});
+
+module.exports = router;
