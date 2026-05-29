@@ -9,7 +9,6 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { API_URL } from '../config';
 
-const socket = io(API_URL);
 
 const Classroom = () => {
   const { roomId } = useParams();
@@ -24,6 +23,8 @@ const Classroom = () => {
   
   const userVideo = useRef();
   const peersRef = useRef([]);
+  // Socket is created lazily inside the component so it never runs at import time
+  const socketRef = useRef(null);
 
   function createPeer(userToSignal, callerID, stream) {
     const peer = new Peer({
@@ -33,7 +34,7 @@ const Classroom = () => {
     });
 
     peer.on('signal', (signal) => {
-      socket.emit('offer', { userToSignal, callerID, signal });
+      socketRef.current.emit('offer', { userToSignal, callerID, signal });
     });
 
     return peer;
@@ -47,7 +48,7 @@ const Classroom = () => {
     });
 
     peer.on('signal', (signal) => {
-      socket.emit('answer', { signal, callerID });
+      socketRef.current.emit('answer', { signal, callerID });
     });
 
     peer.signal(incomingSignal);
@@ -90,6 +91,12 @@ const Classroom = () => {
 
   useEffect(() => {
     if (!sessionToken) return;
+
+    // Create socket connection only when entering the classroom
+    if (!socketRef.current) {
+      socketRef.current = io(API_URL);
+    }
+    const socket = socketRef.current;
 
     let localStream = null;
 
@@ -148,6 +155,7 @@ const Classroom = () => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       socket.disconnect();
+      socketRef.current = null;
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
       }
@@ -168,8 +176,11 @@ const Classroom = () => {
       console.error('Error completing session:', e);
     }
 
-    socket.disconnect();
-    if(stream) {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
     navigate('/dashboard');
