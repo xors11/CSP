@@ -8,20 +8,17 @@ const Session = require('./models/Session');
 const User = require('./models/User');
 require('dotenv').config();
 
-// Allow requests from the Vercel frontend URL (set FRONTEND_URL in Railway env vars)
-const ALLOWED_ORIGINS = process.env.FRONTEND_URL
-  ? [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:3001']
-  : ['http://localhost:3000', 'http://localhost:3001'];
+// CORS: allow localhost (any port), any *.vercel.app preview/production URL, and FRONTEND_URL env var
+const corsOriginFn = (origin, callback) => {
+  if (!origin) return callback(null, true); // curl, Postman, server-to-server
+  if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+  if (origin.endsWith('.vercel.app')) return callback(null, true);
+  if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) return callback(null, true);
+  callback(new Error(`CORS: Origin ${origin} not allowed`));
+};
 
 const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, Postman, etc.)
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-      return callback(null, true);
-    }
-    callback(new Error(`CORS: Origin ${origin} not allowed`));
-  },
+  origin: corsOriginFn,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 };
@@ -30,7 +27,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: corsOriginFn,
     methods: ['GET', 'POST'],
     credentials: true,
   }
@@ -77,7 +74,7 @@ io.on('connection', (socket) => {
         userId = decoded.userId;
         role = decoded.role;
         sessionId = decoded.sessionId;
-        
+
         // Save values in socket object for use during disconnect/ghost events
         socket.userId = userId;
         socket.role = role;
@@ -115,11 +112,11 @@ io.on('connection', (socket) => {
     socket.on('offer', (data) => socket.to(roomId).emit('offer', data));
     socket.on('answer', (data) => socket.to(roomId).emit('answer', data));
     socket.on('ice-candidate', (data) => socket.to(roomId).emit('ice-candidate', data));
-    
+
     socket.on('ghost-detected', async (data) => {
       // Broadcast to other peers
       socket.to(roomId).emit('peer-ghost-detected', data);
-      
+
       // If ghosting is active, log focus loss event in DB
       if (data.isGhosting && socket.sessionId && socket.userId) {
         try {
@@ -141,7 +138,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', async () => {
       socket.to(roomId).emit('user-disconnected', userId);
-      
+
       // Update leave timestamp in DB
       if (socket.sessionId && socket.role) {
         try {
@@ -171,3 +168,15 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/peerlearn')
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch(err => console.log(err));
+
+// Graceful EADDRINUSE — print a helpful message instead of crashing with a wall of stack traces
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌  Port ${PORT} is already in use.`);
+    console.error(`    Run this to fix it:  npx kill-port ${PORT}`);
+    console.error(`    Or on Windows:  netstat -ano | findstr :${PORT}  →  taskkill /F /PID <pid>\n`);
+    process.exit(1);
+  } else {
+    throw err;
+  }
+});
