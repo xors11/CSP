@@ -106,6 +106,20 @@ const VerifySkill = () => {
   const [pastAttempts, setPastAttempts] = useState([]);
   const [reviewFilter, setReviewFilter] = useState('all');
   
+  // ── Anti-cheat state variables ──────────────────────────────────────────────
+  const [violations, setViolations] = useState(0);
+  const [violationLog, setViolationLog] = useState([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [antiCheatActive, setAntiCheatActive] = useState(false);
+  const [timerPaused, setTimerPaused] = useState(false);
+
+  // Warning screen / consent overlays
+  const [showPreExamConsent, setShowPreExamConsent] = useState(false);
+  const [showFullscreenExitWarning, setShowFullscreenExitWarning] = useState(false);
+  const [showTabSwitchWarning, setShowTabSwitchWarning] = useState(false);
+  const [showFinalWarning, setShowFinalWarning] = useState(false);
+  const [showAutoSubmittedModal, setShowAutoSubmittedModal] = useState(false);
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -144,6 +158,93 @@ const VerifySkill = () => {
   const answersRef = useRef({});
   useEffect(() => { answersRef.current = answers; }, [answers]);
 
+  // ── Auto-submit logic ───────────────────────────────────────────────────────
+  const autoSubmitExam = async (currentLog) => {
+    setIsSubmitting(true);
+    setShowConfirmModal(false);
+    setShowFinalWarning(false);
+    setShowFullscreenExitWarning(false);
+    setShowTabSwitchWarning(false);
+    setTimerPaused(true);
+
+    try {
+      const user = JSON.parse(localStorage.getItem('user'));
+      const timeTaken = selectedMode ? Math.max(1, (selectedMode.count * 90) - timeLeft) : 60;
+      
+      const res = await fetch(`${API_URL}/api/verify/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          userId: user?.id || user?._id || 'mock', 
+          skills: subjectsArray, 
+          questions: testData?.questions || [], 
+          answers: answersRef.current,
+          timeTakenSeconds: timeTaken,
+          auto_submitted: true,
+          auto_submit_reason: "Exceeded maximum violations",
+          violation_log: currentLog || violationLog
+        })
+      });
+      const data = await res.json();
+      
+      setStatus({ success: data.verified, message: 'Your exam has been auto-submitted due to repeated fullscreen violations.' });
+      setEvaluationData(data.evaluationResult);
+      if (data.verified && data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+      }
+      setShowAutoSubmittedModal(true);
+    } catch (err) {
+      console.error('Auto-submit error:', err);
+      setStatus({ success: false, message: 'Server error during auto-submit.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // ── Record violation helper ──────────────────────────────────────────────────
+  const recordViolation = (type) => {
+    if (phase !== 'test' || evaluationData) return;
+    const timestamp = new Date().toISOString();
+    setViolationLog(prev => {
+      const newCount = prev.length + 1;
+      const entry = { type, timestamp, count: newCount };
+      const newLog = [...prev, entry];
+
+      setViolations(newCount);
+
+      if (newCount > 5) {
+        autoSubmitExam(newLog);
+      } else if (newCount > 3) {
+        setShowFinalWarning(true);
+      }
+
+      return newLog;
+    });
+  };
+
+  // ── Fullscreen management ──────────────────────────────────────────────────
+  const enterFullscreenAndBegin = async () => {
+    try {
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        await docEl.requestFullscreen();
+      } else if (docEl.webkitRequestFullscreen) {
+        await docEl.webkitRequestFullscreen();
+      } else if (docEl.mozRequestFullScreen) {
+        await docEl.mozRequestFullScreen();
+      } else if (docEl.msRequestFullscreen) {
+        await docEl.msRequestFullscreen();
+      }
+      setIsFullscreen(true);
+      setShowPreExamConsent(false);
+      setShowFullscreenExitWarning(false);
+      setAntiCheatActive(true);
+      setTimerPaused(false);
+    } catch (err) {
+      console.error('Failed to enter fullscreen mode:', err);
+    }
+  };
+
   // Kick off the test fetch when a mode is chosen
   const startTest = async (mode) => {
     setSelectedMode(mode);
@@ -160,6 +261,8 @@ const VerifySkill = () => {
       setAnswers(init);
       setTimeLeft(data.total_time_seconds || mode.count * 90);
       setPhase('test');
+      setShowPreExamConsent(true);
+      setTimerPaused(true);
     } catch (e) {
       console.error('Error fetching test:', e);
       setPhase('select');
@@ -183,7 +286,9 @@ const VerifySkill = () => {
           skills: subjectsArray, 
           questions: testData?.questions || [], 
           answers,
-          timeTakenSeconds: timeTaken 
+          timeTakenSeconds: timeTaken,
+          auto_submitted: false,
+          violation_log: violationLog
         })
       });
       const data = await res.json();
@@ -220,7 +325,9 @@ const VerifySkill = () => {
               skills: subjectsArray, 
               questions: testData?.questions || [], 
               answers: answersRef.current,
-              timeTakenSeconds: timeTaken
+              timeTakenSeconds: timeTaken,
+              auto_submitted: false,
+              violation_log: violationLog
             })
           });
           const data = await res.json();
@@ -232,9 +339,159 @@ const VerifySkill = () => {
       };
       submit(); return;
     }
-    const t = setInterval(() => setTimeLeft(p => p - 1), 1000);
+    const t = setInterval(() => {
+      if (!timerPaused) {
+        setTimeLeft(p => p - 1);
+      }
+    }, 1000);
     return () => clearInterval(t);
-  }, [timeLeft, phase, evaluationData]);
+  }, [timeLeft, phase, evaluationData, timerPaused, violationLog]);
+
+  // ── Anti-cheat event listeners ──────────────────────────────────────────────
+  
+  // 1. Fullscreen change detection
+  useEffect(() => {
+    if (phase !== 'test' || evaluationData || !antiCheatActive) return;
+
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
+
+      setIsFullscreen(isCurrentlyFullscreen);
+
+      if (!isCurrentlyFullscreen) {
+        setTimerPaused(true);
+        setShowFullscreenExitWarning(true);
+        recordViolation('fullscreen_exit');
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, [phase, evaluationData, antiCheatActive]);
+
+  // 2. Tab/Window visibility and focus change detection
+  useEffect(() => {
+    if (phase !== 'test' || evaluationData || !antiCheatActive) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setTimerPaused(true);
+        setShowTabSwitchWarning(true);
+        recordViolation('tab_switch');
+      }
+    };
+
+    const handleWindowBlur = () => {
+      setTimerPaused(true);
+      setShowTabSwitchWarning(true);
+      recordViolation('tab_switch');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [phase, evaluationData, antiCheatActive]);
+
+  // 3. Keyboard locks and shortcut restriction
+  useEffect(() => {
+    if (phase !== 'test' || evaluationData || !antiCheatActive) return;
+
+    const handleKeyDown = (e) => {
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      const isShift = e.shiftKey;
+      const key = e.key.toLowerCase();
+
+      // Dev tools F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C
+      const isDevTools = 
+        e.key === 'F12' || 
+        (isCtrlOrCmd && isShift && (key === 'i' || key === 'j' || key === 'c'));
+      
+      if (isDevTools) {
+        e.preventDefault();
+        e.stopPropagation();
+        recordViolation('devtools_open');
+        return false;
+      }
+
+      // Blocked keyboard shortcut combinations
+      const blockedKeys = ['c', 'v', 'a', 'x', 'u', 's', 'p', 't', 'n', 'w', 'r'];
+      const isBlockedShortcut = isCtrlOrCmd && blockedKeys.includes(key);
+
+      // Refresh shortcut F5
+      const isRefresh = e.key === 'F5';
+
+      // Fullscreen shortcut F11
+      const isFullscreenToggle = e.key === 'F11';
+
+      if (isBlockedShortcut || isRefresh || isFullscreenToggle) {
+        e.preventDefault();
+        e.stopPropagation();
+        recordViolation('keyboard_shortcut');
+        return false;
+      }
+    };
+
+    const handleContextMenu = (e) => {
+      e.preventDefault();
+      recordViolation('keyboard_shortcut');
+      return false;
+    };
+
+    document.addEventListener('keydown', handleKeyDown, { capture: true });
+    document.addEventListener('contextmenu', handleContextMenu, { capture: true });
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, { capture: true });
+      document.removeEventListener('contextmenu', handleContextMenu, { capture: true });
+    };
+  }, [phase, evaluationData, antiCheatActive]);
+
+  // 4. Selection, Copy, Clipboard & Drag protection
+  useEffect(() => {
+    if (phase !== 'test' || evaluationData || !antiCheatActive) return;
+
+    const handleCopy = (e) => {
+      e.preventDefault();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText('');
+      }
+      recordViolation('keyboard_shortcut');
+    };
+
+    const preventDragDrop = (e) => {
+      e.preventDefault();
+    };
+
+    document.addEventListener('copy', handleCopy);
+    document.addEventListener('dragstart', preventDragDrop);
+    document.addEventListener('drop', preventDragDrop);
+    document.addEventListener('dragover', preventDragDrop);
+
+    return () => {
+      document.removeEventListener('copy', handleCopy);
+      document.removeEventListener('dragstart', preventDragDrop);
+      document.removeEventListener('drop', preventDragDrop);
+      document.removeEventListener('dragover', preventDragDrop);
+    };
+  }, [phase, evaluationData, antiCheatActive]);
 
   const handleAnswerChange = (qId, val) => setAnswers(p => ({ ...p, [qId]: val }));
 
@@ -1104,7 +1361,7 @@ const VerifySkill = () => {
           </motion.div>
         ) : (
           /* ── Active Test Form ── */
-          <form onSubmit={handleVerify} className="space-y-12">
+          <form onSubmit={handleVerify} className="space-y-12 select-none" style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}>
 
             {/* Sticky progress bar */}
             <div className="sticky top-6 z-30 glass-panel bg-slate-950/85 p-4 border-white/10 flex items-center justify-between gap-4 mb-8">
@@ -1112,6 +1369,13 @@ const VerifySkill = () => {
                 <Terminal size={18} className="text-indigo-400" />
                 <span className="text-xs sm:text-sm font-bold text-white font-mono">sheet_v2.sh</span>
               </div>
+
+              {/* Real-time violation counter */}
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-400 font-mono text-xs font-black">
+                <AlertTriangle size={14} className="animate-pulse" />
+                <span>Violations: {violations}/5</span>
+              </div>
+
               {timeLeft !== null && (
                 <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono text-xs font-bold transition-all
                   ${timeLeft > 300 ? 'text-emerald-400 border-emerald-500/25 bg-emerald-500/5' :
@@ -1445,6 +1709,165 @@ const VerifySkill = () => {
                   </>
                 )}
 
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ── Anti-Cheat: Pre-Exam Fullscreen Consent Overlay ── */}
+          {showPreExamConsent && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-[#030014] backdrop-blur-2xl">
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                className="w-full max-w-lg bg-gradient-to-b from-slate-900/90 to-slate-950 border border-amber-500/25 p-8 rounded-3xl shadow-[0_0_50px_rgba(245,158,11,0.15)] relative overflow-hidden text-center">
+                
+                {/* Decorative Amber Glow */}
+                <div className="absolute -top-12 -left-12 w-36 h-36 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-12 -right-12 w-36 h-36 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+
+                <div className="mx-auto w-16 h-16 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mb-6 text-amber-400">
+                  <AlertTriangle size={32} className="animate-pulse" />
+                </div>
+
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mb-4 uppercase">Mandatory Fullscreen Lockdown</h2>
+                
+                <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-4 mb-6 text-left space-y-3">
+                  <p className="text-slate-200 text-xs sm:text-sm font-medium leading-relaxed">
+                    This exam requires **fullscreen mode** for anti-cheat verification. 
+                  </p>
+                  <ul className="text-slate-400 text-[11px] list-disc list-inside space-y-1.5 font-light">
+                    <li>Exiting fullscreen will be treated as an immediate **violation**.</li>
+                    <li>Switching browser tabs or applications will trigger a **violation**.</li>
+                    <li>All sensitive hotkeys (Copy/Paste, DevTools, Inspect) are fully **disabled**.</li>
+                    <li>Exceeding **5 violations** automatically submits your exam immediately.</li>
+                  </ul>
+                </div>
+
+                <p className="text-slate-400 text-xs font-light mb-8 italic">
+                  Click 'Start Exam' to enter fullscreen and begin.
+                </p>
+
+                <button type="button" onClick={enterFullscreenAndBegin}
+                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-[0_0_30px_rgba(245,158,11,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans">
+                  Start Exam & Enter Fullscreen
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ── Anti-Cheat: Fullscreen Exit Warning Overlay ── */}
+          {showFullscreenExitWarning && !showAutoSubmittedModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/95 backdrop-blur-2xl">
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                className="w-full max-w-lg bg-gradient-to-b from-slate-900 to-slate-950 border border-rose-500/30 p-8 rounded-3xl shadow-[0_0_50px_rgba(239,68,68,0.2)] relative overflow-hidden text-center">
+                
+                <div className="absolute -top-12 -left-12 w-36 h-36 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                <div className="mx-auto w-16 h-16 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mb-6 text-rose-400">
+                  <AlertCircle size={32} className="animate-bounce" />
+                </div>
+
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mb-3 uppercase">⚠️ Fullscreen Exited!</h2>
+                
+                <p className="text-slate-300 text-xs sm:text-sm font-light mb-6 leading-relaxed">
+                  You have exited fullscreen! Please return to fullscreen immediately to continue your exam. 
+                  **This violation has been recorded.**
+                </p>
+
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-8 flex justify-between items-center text-xs">
+                  <span className="text-slate-400 uppercase font-bold tracking-wider">Total Recorded Violations</span>
+                  <span className="font-extrabold text-rose-400 font-mono text-base">{violations} / 5</span>
+                </div>
+
+                <button type="button" onClick={enterFullscreenAndBegin}
+                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans">
+                  Return to Fullscreen & Resume
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ── Anti-Cheat: Tab/Window Switch Warning Overlay ── */}
+          {showTabSwitchWarning && !showAutoSubmittedModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/95 backdrop-blur-2xl">
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                className="w-full max-w-lg bg-gradient-to-b from-slate-900 to-slate-950 border border-rose-500/30 p-8 rounded-3xl shadow-[0_0_50px_rgba(239,68,68,0.2)] relative overflow-hidden text-center">
+                
+                <div className="mx-auto w-16 h-16 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mb-6 text-rose-400">
+                  <XCircle size={32} className="animate-pulse" />
+                </div>
+
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mb-3 uppercase">⚠️ Tab Switch Detected!</h2>
+                
+                <p className="text-slate-300 text-xs sm:text-sm font-light mb-6 leading-relaxed">
+                  Switching tabs or windows during the exam is **strictly prohibited**. 
+                  This violation has been logged. Continuing to switch tabs will lead to **automatic submission**.
+                </p>
+
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-8 flex justify-between items-center text-xs">
+                  <span className="text-slate-400 uppercase font-bold tracking-wider">Total Recorded Violations</span>
+                  <span className="font-extrabold text-rose-400 font-mono text-base">{violations} / 5</span>
+                </div>
+
+                <button type="button" 
+                  onClick={() => {
+                    setShowTabSwitchWarning(false);
+                    setTimerPaused(false);
+                  }}
+                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans">
+                  Resume Exam
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ── Anti-Cheat: 3-Violation Warning Modal ── */}
+          {showFinalWarning && !showAutoSubmittedModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+              <motion.div initial={{ scale: 0.95, y: 15 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 15 }}
+                className="w-full max-w-md bg-gradient-to-b from-slate-900 to-slate-950 border border-amber-500/30 p-6 rounded-2xl shadow-2xl relative overflow-hidden text-center">
+                
+                <div className="mx-auto w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-4 text-amber-400">
+                  <AlertCircle size={24} className="animate-pulse" />
+                </div>
+
+                <h3 className="text-lg font-black text-white mb-2 uppercase">Rule Violations Warning</h3>
+                <p className="text-slate-300 text-xs font-light mb-6 leading-relaxed">
+                  You have violated exam rules **{violations} times**. 
+                  One more violation will **auto-submit** your exam immediately.
+                </p>
+
+                <button type="button" onClick={() => setShowFinalWarning(false)}
+                  className="w-full py-3 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-black cursor-pointer transition-all uppercase font-sans">
+                  I Understand
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ── Anti-Cheat: Auto-Submitted Modal ── */}
+          {showAutoSubmittedModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+              <motion.div initial={{ scale: 0.95, y: 15 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 15 }}
+                className="w-full max-w-md bg-gradient-to-b from-slate-900 to-slate-950 border border-red-500/30 p-8 rounded-3xl shadow-[0_0_50px_rgba(239,68,68,0.3)] relative overflow-hidden text-center">
+                
+                <div className="mx-auto w-16 h-16 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center mb-6 text-red-400 animate-bounce">
+                  <XCircle size={32} />
+                </div>
+
+                <h3 className="text-xl font-black text-white mb-3 uppercase tracking-tight">Exam Auto-Submitted!</h3>
+                <p className="text-slate-300 text-xs sm:text-sm font-light mb-8 leading-relaxed">
+                  Your exam has been auto-submitted due to repeated fullscreen violations. 
+                  All unattempted questions have been marked as Not Attempted.
+                </p>
+
+                <button type="button" onClick={() => setShowAutoSubmittedModal(false)}
+                  className="w-full py-4 rounded-2xl text-xs font-black tracking-widest bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-lg cursor-pointer hover:from-rose-600 hover:to-red-700 transition-all uppercase font-sans">
+                  View Results Report
+                </button>
               </motion.div>
             </motion.div>
           )}
