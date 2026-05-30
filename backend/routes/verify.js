@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Question = require('../models/Question');
+const VerificationAttempt = require('../models/VerificationAttempt');
 
 // Helper to call Groq API with robust dual-key and multi-model fallback resilience
 async function callGroq(messages, jsonMode = false) {
