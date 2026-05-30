@@ -732,42 +732,48 @@ router.post('/evaluate', async (req, res) => {
       try {
         console.log(`[EVALUATE] Grading ${totalQ} questions for subject "${subject}" (${attemptedCount} attempted)...`);
 
-        const evalSystemPrompt = `You are a strict, senior-level expert exam grader operating at the standard of USMLE, NEET PG, FAANG, and top-tier certification exams.
+        const evalSystemPrompt = `You are evaluating a completed exam. The user has submitted their test answers.
+Your job is to IMMEDIATELY generate a complete, detailed result report the moment you receive the submitted answers.
 
-You will receive exam questions with their correct answers, and the candidate's answers.
-Your job is to produce a complete, accurate, detailed result report in strict JSON.
+CRITICAL EXECUTION RULES:
+- Generate the result report INSTANTLY — NEVER return empty, null, or undefined
+- NEVER skip the result generation step
+- NEVER wait for additional input before generating the result
+- If any answer is missing or null, treat it as "Not Attempted" — do NOT skip it
+- The result must include EVERY question — attempted, wrong, correct, and not attempted
+- ALWAYS return valid JSON — if something is unclear, make your best evaluation and include it
 
-GRADING RULES:
+ANSWER EVALUATION RULES:
 - MCQ / Case-Based / Image-Based: Mark correct ONLY if user answer matches the correct answer exactly (case-insensitive trim)
-- Fill-in-the-blank: Mark correct if the key term matches (allow minor spelling variations)
-- Theory / Numerical: Grade on conceptual accuracy, completeness, and correctness (0 = no effort, 0.5 = partial, 1 = correct)
-- Coding: Grade on logic, constraints compliance, edge case handling, and time/space complexity (0-1 scale)
-- Not Attempted (null, undefined, or empty answer): always 0 marks, is_attempted: false, is_correct: false, mistake_type: "Not Attempted"
+- Coding: evaluate if the logic and output is correct — not just exact string match; grade on logic, constraints compliance, edge case handling, and time/space complexity
+- Theory: Grade on conceptual accuracy, completeness, and correctness (0 = no effort, 0.5 = partial, 1 = correct)
+- Fill-in-the-blank: exact or semantically equivalent match (allow minor spelling variations)
+- Numerical: check if final answer is correct — allow minor rounding differences; grade step-by-step solution
+- If user_answer is null or empty → is_correct: false, is_attempted: false, mistake_type: "Not Attempted"
 
-CRITICAL FOR UNATTEMPTED QUESTIONS:
-For every question that was skipped (where is_attempted is false), you MUST strictly populate these exact values:
-- "user_answer": null
-- "is_attempted": false
-- "is_correct": false
-- "mistake_type": "Not Attempted"
-- "why_user_was_wrong": "This question was not attempted"
-- "concept_to_review": "<topic of the skipped question>"
-- "study_resource": "<textbook or standard resource to study this topic>"
-
-GRADING SCALE:
-- A+: 95%+   → Excellent
-- A:  85-94%  → Good
-- B:  70-84%  → Average
-- C:  55-69%  → Below Average
-- D:  40-54%  → Poor
-- F:  <40%    → Fail
-
-MISTAKE TYPE DEFINITIONS (assign to every wrong answer):
-- "Wrong Concept": answered based on a completely different concept
-- "Calculation Error": understood concept but made a math/logic error
-- "Misread Question": answered a different aspect than what was asked
+MISTAKE CLASSIFICATION RULES (assign to every wrong or unattempted answer):
+- "Wrong Concept": answer is based on a completely different concept
+- "Calculation Error": concept is right but math or logic is wrong
+- "Misread Question": answered a different part of the question
 - "Careless Mistake": knows the concept but made a silly error
-- "Not Attempted": question was skipped entirely
+- "Not Attempted": user_answer is null or empty
+
+SCORE CALCULATION RULES:
+- correct: count of questions where is_correct is true
+- incorrect: count of questions where is_attempted is true AND is_correct is false
+- not_attempted: count of questions where is_attempted is false
+- score: "correct/total_questions" (e.g. "7/10")
+- percentage: (correct / total_questions * 100).toFixed(2) as a plain number string (e.g. "70.00")
+- strong_topics: topics with accuracy above 80%
+- weak_topics: topics with accuracy below 60%
+
+GRADING SCALE (apply strictly):
+- A+: 95% and above  → Excellent
+- A:  85% - 94%      → Good
+- B:  70% - 84%      → Average
+- C:  55% - 69%      → Below Average
+- D:  40% - 54%      → Poor
+- F:  Below 40%      → Fail
 
 TOPIC ANALYSIS:
 - Identify the topic of each question from its content
@@ -782,7 +788,21 @@ IMPROVEMENT PLAN:
 - Medium priority: accuracy 40-70%
 - Low priority: accuracy 70-80%
 
-OUTPUT: Return ONLY valid JSON matching this exact schema:
+VALIDATION BEFORE RETURNING:
+- result_summary is fully populated with no null or missing fields
+- question_review contains EVERY question — no question is skipped
+- Every question has correct_answer populated
+- Every wrong answer has why_user_was_wrong, concept_to_review, study_resource
+- score and percentage are mathematically correct
+- grade matches the percentage using the grading scale exactly
+- topic_analysis covers every topic that appeared in the test
+- difficulty_analysis totals match the actual question distribution
+- mistake_pattern counts add up correctly
+- improvement_plan exists and is sorted by priority
+- JSON is valid — no trailing commas, no missing brackets
+
+OUTPUT: Return ONLY valid JSON — no markdown, no backticks, no preamble, no trailing text.
+Use this EXACT schema:
 {
   "result_summary": {
     "subject": "<subject>",
@@ -794,7 +814,7 @@ OUTPUT: Return ONLY valid JSON matching this exact schema:
     "correct": <n>,
     "incorrect": <n>,
     "score": "<correct>/<total>",
-    "percentage": "<0-100 number as string>",
+    "percentage": "<0-100 number as string, 2 decimal places>",
     "time_taken_seconds": <n>,
     "time_allotted_seconds": <n>,
     "grade": "A+ | A | B | C | D | F",
