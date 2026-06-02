@@ -22,14 +22,22 @@ process.on('uncaughtException', (err) => {
 });
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
-// Allow localhost (any port), any *.vercel.app preview/production URL, and FRONTEND_URL env var
+// Allow localhost (any port), any *.vercel.app preview/production URL,
+// any *.onrender.com URL (for Render preview environments), and FRONTEND_URL env var.
+const ALLOWED_ORIGINS = [
+  'https://csp-phi-one.vercel.app', // explicit production Vercel domain
+];
+
 const corsOriginFn = (origin, callback) => {
   try {
     if (!origin) return callback(null, true); // curl, Postman, server-to-server
     if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
     if (origin.endsWith('.vercel.app')) return callback(null, true);
+    if (origin.endsWith('.onrender.com')) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
     if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) return callback(null, true);
     // Block everything else
+    console.warn(`[CORS] Blocked origin: ${origin}`);
     return callback(null, false);
   } catch (e) {
     return callback(null, false);

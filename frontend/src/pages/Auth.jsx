@@ -34,7 +34,7 @@ const Auth = () => {
         alert(data.message);
       }
     } catch {
-      alert('Network error. Is the backend running?');
+      alert(`Network error: Could not reach backend at ${API_URL}. Check your internet connection or try again.`);
     } finally {
       setLoading(false);
     }
