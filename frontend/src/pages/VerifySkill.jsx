@@ -212,9 +212,9 @@ const VerifySkill = () => {
 
       setViolations(newCount);
 
-      if (newCount > 5) {
+      if (newCount > 3) {
         autoSubmitExam(newLog);
-      } else if (newCount > 3) {
+      } else if (newCount >= 2) {
         setShowFinalWarning(true);
       }
 
@@ -809,6 +809,45 @@ const VerifySkill = () => {
               const strokeDash = 2 * Math.PI * 54;
               const offset = strokeDash - (pct / 100) * strokeDash;
 
+              // Personalized feedback based on score
+              const getPersonalizedFeedback = (score) => {
+                if (score >= 95) return {
+                  emoji: '🏆', title: 'Outstanding Performance!',
+                  message: 'You have demonstrated exceptional mastery. Your knowledge is at an expert level — keep pushing the boundaries and consider mentoring others in this subject.',
+                  color: 'from-emerald-500/20 to-teal-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400'
+                };
+                if (score >= 85) return {
+                  emoji: '⭐', title: 'Excellent Work!',
+                  message: 'Strong command of the subject demonstrated. You are well above the passing threshold. Review the few missed topics to achieve perfection.',
+                  color: 'from-emerald-500/15 to-green-500/10', border: 'border-emerald-500/25', text: 'text-emerald-400'
+                };
+                if (score >= 70) return {
+                  emoji: '✅', title: 'Good Job!',
+                  message: 'You have a solid understanding of the fundamentals. Focus on the weak topics identified below to move into the "Excellent" tier.',
+                  color: 'from-indigo-500/15 to-blue-500/10', border: 'border-indigo-500/25', text: 'text-indigo-400'
+                };
+                if (score >= 55) return {
+                  emoji: '📚', title: 'Needs Improvement',
+                  message: 'You have a basic understanding, but significant gaps remain. Prioritize the high-priority topics in your study roadmap below before reattempting.',
+                  color: 'from-amber-500/15 to-yellow-500/10', border: 'border-amber-500/25', text: 'text-amber-400'
+                };
+                if (score >= 40) return {
+                  emoji: '⚠️', title: 'Below Expectation',
+                  message: 'Your preparation needs substantial work. Revisit core concepts, use the study resources listed below, and practice with the Quick Test mode regularly.',
+                  color: 'from-orange-500/15 to-amber-500/10', border: 'border-orange-500/25', text: 'text-orange-400'
+                };
+                return {
+                  emoji: '❌', title: 'Reattempt Required',
+                  message: 'This result indicates fundamental knowledge gaps. Do not be discouraged — use the detailed roadmap below to rebuild from the ground up. Consider the Quick Test for focused practice.',
+                  color: 'from-rose-500/15 to-red-500/10', border: 'border-rose-500/25', text: 'text-rose-400'
+                };
+              };
+              const feedback = getPersonalizedFeedback(pct);
+
+              // Topic strengths and weaknesses
+              const strongTopics = evaluationData?.topic_analysis?.filter(t => t.status === 'Strong') || [];
+              const weakTopics = evaluationData?.topic_analysis?.filter(t => t.status !== 'Strong') || [];
+
               return (
                 <>
                   {/* SECTION 1: SCORE CARD */}
@@ -876,6 +915,70 @@ const VerifySkill = () => {
                       "{recommendation}"
                     </p>
                   </div>
+
+                  {/* PERSONALIZED FEEDBACK CARD */}
+                  <div className={`p-6 rounded-3xl border bg-gradient-to-br ${feedback.color} ${feedback.border} shadow-xl relative overflow-hidden`}>
+                    <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full blur-3xl opacity-30" style={{background: 'radial-gradient(circle, rgba(99,102,241,0.5), transparent)'}} />
+                    <div className="flex items-start gap-4">
+                      <div className="text-4xl shrink-0 mt-1">{feedback.emoji}</div>
+                      <div className="space-y-2 flex-1">
+                        <h3 className={`text-base font-black uppercase tracking-wider ${feedback.text}`}>{feedback.title}</h3>
+                        <p className="text-slate-300 text-xs sm:text-sm font-light leading-relaxed">{feedback.message}</p>
+                        <div className="flex flex-wrap gap-3 pt-3 border-t border-white/5">
+                          <div className="flex items-center gap-1.5">
+                            <CheckCircle size={13} className="text-emerald-400" />
+                            <span className="text-xs text-emerald-400 font-bold font-mono">{correct} Correct</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <XCircle size={13} className="text-rose-400" />
+                            <span className="text-xs text-rose-400 font-bold font-mono">{incorrect} Incorrect</span>
+                          </div>
+                          {unattempted > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <AlertCircle size={13} className="text-slate-400" />
+                              <span className="text-xs text-slate-400 font-bold font-mono">{unattempted} Skipped</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* TOPIC STRENGTHS & WEAKNESSES SUMMARY */}
+                  {(strongTopics.length > 0 || weakTopics.length > 0) && (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      {strongTopics.length > 0 && (
+                        <div className="p-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 space-y-3">
+                          <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <CheckCircle size={13} /> Your Strengths
+                          </h4>
+                          <div className="space-y-2">
+                            {strongTopics.slice(0, 5).map((t, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span className="text-slate-200 font-medium truncate max-w-[160px]">{t.topic}</span>
+                                <span className="text-emerald-400 font-mono font-bold ml-2 shrink-0">{t.accuracy}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {weakTopics.length > 0 && (
+                        <div className="p-4 rounded-2xl border border-rose-500/20 bg-rose-500/5 space-y-3">
+                          <h4 className="text-xs font-black text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <AlertTriangle size={13} /> Focus Areas
+                          </h4>
+                          <div className="space-y-2">
+                            {weakTopics.slice(0, 5).map((t, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span className="text-slate-200 font-medium truncate max-w-[160px]">{t.topic}</span>
+                                <span className={`font-mono font-bold ml-2 shrink-0 ${t.status === 'Needs Improvement' ? 'text-amber-400' : 'text-rose-400'}`}>{t.accuracy}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* SECTION 2: PERFORMANCE BREAKDOWN */}
                   <div className="glass-panel p-6 bg-slate-900/10 border-white/5 space-y-6 print-card shadow-xl">
@@ -1371,9 +1474,12 @@ const VerifySkill = () => {
               </div>
 
               {/* Real-time violation counter */}
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-400 font-mono text-xs font-black">
-                <AlertTriangle size={14} className="animate-pulse" />
-                <span>Violations: {violations}/5</span>
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border font-mono text-xs font-black transition-all
+                ${violations === 0 ? 'border-slate-700 bg-slate-900/60 text-slate-400' :
+                  violations === 1 ? 'border-amber-500/40 bg-amber-500/10 text-amber-400' :
+                  'border-rose-500/40 bg-rose-500/15 text-rose-400 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.2)]'}`}>
+                <AlertTriangle size={14} className={violations > 0 ? 'animate-pulse' : ''} />
+                <span>Violations: {violations}/3 {violations > 0 && `· ${3 - violations} left`}</span>
               </div>
 
               {timeLeft !== null && (
@@ -1738,7 +1844,7 @@ const VerifySkill = () => {
                     <li>Exiting fullscreen will be treated as an immediate **violation**.</li>
                     <li>Switching browser tabs or applications will trigger a **violation**.</li>
                     <li>All sensitive hotkeys (Copy/Paste, DevTools, Inspect) are fully **disabled**.</li>
-                    <li>Exceeding **5 violations** automatically submits your exam immediately.</li>
+                    <li>Exceeding <strong className="text-amber-300">3 violations</strong> automatically submits your exam immediately.</li>
                   </ul>
                 </div>
 
@@ -1770,17 +1876,25 @@ const VerifySkill = () => {
                 <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mb-3 uppercase">⚠️ Fullscreen Exited!</h2>
                 
                 <p className="text-slate-300 text-xs sm:text-sm font-light mb-6 leading-relaxed">
-                  You have exited fullscreen! Please return to fullscreen immediately to continue your exam. 
-                  **This violation has been recorded.**
+                  You have exited fullscreen! Please return immediately to continue your exam.
+                  <span className="text-rose-400 font-bold"> This violation has been recorded.</span>
                 </p>
 
-                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-8 flex justify-between items-center text-xs">
-                  <span className="text-slate-400 uppercase font-bold tracking-wider">Total Recorded Violations</span>
-                  <span className="font-extrabold text-rose-400 font-mono text-base">{violations} / 5</span>
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-3 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 uppercase font-bold tracking-wider">Violations Recorded</span>
+                    <span className="font-extrabold text-rose-400 font-mono text-base">{violations} / 3</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-white/5">
+                    <div className="h-full rounded-full bg-rose-500 transition-all duration-500" style={{ width: `${Math.min((violations / 3) * 100, 100)}%` }} />
+                  </div>
+                  <p className={`text-xs font-bold text-center ${3 - violations <= 1 ? 'text-rose-400 animate-pulse' : 'text-amber-400'}`}>
+                    {3 - violations <= 0 ? '🚨 Auto-submitting...' : `⚠️ ${3 - violations} violation${3 - violations === 1 ? '' : 's'} remaining before auto-submit`}
+                  </p>
                 </div>
 
                 <button type="button" onClick={enterFullscreenAndBegin}
-                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans">
+                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans mt-4">
                   Return to Fullscreen & Resume
                 </button>
               </motion.div>
@@ -1800,14 +1914,22 @@ const VerifySkill = () => {
 
                 <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mb-3 uppercase">⚠️ Tab Switch Detected!</h2>
                 
-                <p className="text-slate-300 text-xs sm:text-sm font-light mb-6 leading-relaxed">
-                  Switching tabs or windows during the exam is **strictly prohibited**. 
-                  This violation has been logged. Continuing to switch tabs will lead to **automatic submission**.
+                <p className="text-slate-300 text-xs sm:text-sm font-light mb-4 leading-relaxed">
+                  Switching tabs or windows during the exam is <span className="text-rose-400 font-bold">strictly prohibited</span>.
+                  This violation has been logged. Exceeding 3 violations will trigger <span className="text-rose-400 font-bold">automatic submission</span>.
                 </p>
 
-                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-8 flex justify-between items-center text-xs">
-                  <span className="text-slate-400 uppercase font-bold tracking-wider">Total Recorded Violations</span>
-                  <span className="font-extrabold text-rose-400 font-mono text-base">{violations} / 5</span>
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 mb-3 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 uppercase font-bold tracking-wider">Violations Recorded</span>
+                    <span className={`font-extrabold font-mono text-base ${violations >= 3 ? 'text-red-400 animate-pulse' : violations >= 2 ? 'text-rose-400' : 'text-amber-400'}`}>{violations} / 3</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-white/5">
+                    <div className={`h-full rounded-full transition-all duration-500 ${violations >= 3 ? 'bg-red-500' : violations >= 2 ? 'bg-rose-500' : 'bg-amber-500'}`} style={{ width: `${Math.min((violations / 3) * 100, 100)}%` }} />
+                  </div>
+                  <p className={`text-xs font-bold text-center ${ 3 - violations <= 0 ? 'text-red-400 animate-pulse' : 3 - violations === 1 ? 'text-rose-400 animate-pulse' : 'text-amber-400'}`}>
+                    {3 - violations <= 0 ? '🚨 Next event will auto-submit your exam!' : `⚠️ ${3 - violations} violation${3 - violations === 1 ? '' : 's'} remaining before auto-submit`}
+                  </p>
                 </div>
 
                 <button type="button" 
@@ -1815,8 +1937,8 @@ const VerifySkill = () => {
                     setShowTabSwitchWarning(false);
                     setTimerPaused(false);
                   }}
-                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans">
-                  Resume Exam
+                  className="w-full py-4 rounded-2xl text-sm font-black tracking-wide bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white shadow-[0_0_30px_rgba(239,68,68,0.3)] cursor-pointer transition-all duration-200 uppercase font-sans mt-4">
+                  I Understand — Resume Exam
                 </button>
               </motion.div>
             </motion.div>
@@ -1833,15 +1955,28 @@ const VerifySkill = () => {
                   <AlertCircle size={24} className="animate-pulse" />
                 </div>
 
-                <h3 className="text-lg font-black text-white mb-2 uppercase">Rule Violations Warning</h3>
-                <p className="text-slate-300 text-xs font-light mb-6 leading-relaxed">
-                  You have violated exam rules **{violations} times**. 
-                  One more violation will **auto-submit** your exam immediately.
+                <h3 className="text-lg font-black text-white mb-2 uppercase">⚠️ Final Warning!</h3>
+                <p className="text-slate-300 text-xs font-light mb-4 leading-relaxed">
+                  You have violated exam rules <span className="text-amber-400 font-bold">{violations} time{violations !== 1 ? 's' : ''}</span>.
+                  <span className="text-rose-400 font-bold"> Any further violation will automatically submit your exam.</span>
                 </p>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 mb-5 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-bold uppercase tracking-wider">Violation Status</span>
+                    <span className="font-extrabold text-amber-400 font-mono text-sm">{violations} / 3</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-white/5">
+                    <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${Math.min((violations / 3) * 100, 100)}%` }} />
+                  </div>
+                  <p className="text-xs text-rose-400 font-bold text-center animate-pulse">
+                    🚨 {3 - violations} violation{3 - violations === 1 ? '' : 's'} remaining — next one auto-submits!
+                  </p>
+                </div>
 
                 <button type="button" onClick={() => setShowFinalWarning(false)}
                   className="w-full py-3 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-black cursor-pointer transition-all uppercase font-sans">
-                  I Understand
+                  I Understand — Continue Exam
                 </button>
               </motion.div>
             </motion.div>
@@ -1859,10 +1994,14 @@ const VerifySkill = () => {
                 </div>
 
                 <h3 className="text-xl font-black text-white mb-3 uppercase tracking-tight">Exam Auto-Submitted!</h3>
-                <p className="text-slate-300 text-xs sm:text-sm font-light mb-8 leading-relaxed">
-                  Your exam has been auto-submitted due to repeated fullscreen violations. 
+                <p className="text-slate-300 text-xs sm:text-sm font-light mb-4 leading-relaxed">
+                  Your exam has been auto-submitted because you exceeded <span className="text-rose-400 font-bold">3 violations</span>.
                   All unattempted questions have been marked as Not Attempted.
                 </p>
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 mb-6 text-xs text-slate-400">
+                  <span className="text-rose-400 font-bold">Total violations recorded: {violations}/3</span>
+                  <p className="mt-1 font-light">Your progress up to the point of submission has been saved and evaluated.</p>
+                </div>
 
                 <button type="button" onClick={() => setShowAutoSubmittedModal(false)}
                   className="w-full py-4 rounded-2xl text-xs font-black tracking-widest bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-lg cursor-pointer hover:from-rose-600 hover:to-red-700 transition-all uppercase font-sans">
