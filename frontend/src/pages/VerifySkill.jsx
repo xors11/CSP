@@ -127,11 +127,28 @@ const VerifySkill = () => {
       const user = JSON.parse(localStorage.getItem('user'));
       if (!user) return;
       try {
-        const res = await fetch(`${API_URL}/api/verify/attempts?userId=${user?.id || user?._id || 'mock'}&subject=${encodeURIComponent(subjectsQuery)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setPastAttempts(data);
+        const studentId = user?.id || user?._id || 'mock';
+        const [resVerify, resResults] = await Promise.all([
+          fetch(`${API_URL}/api/verify/attempts?userId=${studentId}&subject=${encodeURIComponent(subjectsQuery)}`).catch(() => null),
+          fetch(`${API_URL}/api/results/student/${studentId}`).catch(() => null)
+        ]);
+
+        let combined = [];
+
+        if (resVerify && resVerify.ok) {
+          const verifyData = await resVerify.json();
+          combined.push(...verifyData);
         }
+
+        if (resResults && resResults.ok) {
+          const resultsData = await resResults.json();
+          const filteredResults = resultsData.filter(r => r.domain === subjectsQuery);
+          combined.push(...filteredResults);
+        }
+
+        // Sort by date descending
+        combined.sort((a, b) => new Date(b.createdAt || b.attempted_at) - new Date(a.createdAt || a.attempted_at));
+        setPastAttempts(combined);
       } catch (err) {
         console.error('Error fetching past attempts:', err);
       }
@@ -142,8 +159,12 @@ const VerifySkill = () => {
   }, [phase, subjectsQuery]);
 
   const viewPastAttempt = (attempt) => {
-    setEvaluationData(attempt);
-    setPhase('test');
+    if (attempt._id && attempt.domain) {
+      navigate(`/result/${attempt._id}`);
+    } else {
+      setEvaluationData(attempt);
+      setPhase('test');
+    }
   };
 
   // Loading animation stepper
@@ -171,28 +192,32 @@ const VerifySkill = () => {
       const user = JSON.parse(localStorage.getItem('user'));
       const timeTaken = selectedMode ? Math.max(1, (selectedMode.count * 90) - timeLeft) : 60;
       
-      const res = await fetch(`${API_URL}/api/verify/evaluate`, {
+      const res = await fetch(`${API_URL}/api/results/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user?.id || user?._id || 'mock', 
-          skills: subjectsArray, 
+          student_id: user?.id || user?._id || 'mock', 
+          exam_id: null,
+          mentor_id: null,
+          domain: subjectsQuery, 
           questions: testData?.questions || [], 
           answers: answersRef.current,
-          timeTakenSeconds: timeTaken,
-          auto_submitted: true,
-          auto_submit_reason: "Exceeded maximum violations",
-          violation_log: currentLog || violationLog
+          time_taken_seconds: timeTaken,
+          violation_count: (currentLog || violationLog).length,
+          auto_submitted: true
         })
       });
       const data = await res.json();
       
-      setStatus({ success: data.verified, message: 'Your exam has been auto-submitted due to repeated fullscreen violations.' });
-      setEvaluationData(data.evaluationResult);
-      if (data.verified && data.user) {
+      if (data.user) {
         localStorage.setItem('user', JSON.stringify(data.user));
       }
-      setShowAutoSubmittedModal(true);
+      
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+      
+      navigate(`/result/${data.result_id}`);
     } catch (err) {
       console.error('Auto-submit error:', err);
       setStatus({ success: false, message: 'Server error during auto-submit.' });
@@ -278,27 +303,32 @@ const VerifySkill = () => {
       const user = JSON.parse(localStorage.getItem('user'));
       const timeTaken = selectedMode ? Math.max(1, (selectedMode.count * 90) - timeLeft) : 60;
       
-      const res = await fetch(`${API_URL}/api/verify/evaluate`, {
+      const res = await fetch(`${API_URL}/api/results/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          userId: user?.id || user?._id || 'mock', 
-          skills: subjectsArray, 
+          student_id: user?.id || user?._id || 'mock', 
+          exam_id: null,
+          mentor_id: null,
+          domain: subjectsQuery, 
           questions: testData?.questions || [], 
           answers,
-          timeTakenSeconds: timeTaken,
-          auto_submitted: false,
-          violation_log: violationLog
+          time_taken_seconds: timeTaken,
+          violation_count: violations,
+          auto_submitted: false
         })
       });
       const data = await res.json();
       
-      // Update states
-      setStatus({ success: data.verified, message: data.evaluationResult?.message || 'Evaluated!' });
-      setEvaluationData(data.evaluationResult);
-      if (data.verified && data.user) {
+      if (data.user) {
         localStorage.setItem('user', JSON.stringify(data.user));
       }
+      
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+      
+      navigate(`/result/${data.result_id}`);
     } catch (err) {
       console.error('Evaluation submit error:', err);
       setStatus({ success: false, message: 'Server error during grading. Please try again.' });
@@ -317,23 +347,29 @@ const VerifySkill = () => {
         try {
           const user = JSON.parse(localStorage.getItem('user'));
           const timeTaken = selectedMode ? selectedMode.count * 90 : 60;
-          const res = await fetch(`${API_URL}/api/verify/evaluate`, {
+          const res = await fetch(`${API_URL}/api/results/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-              userId: user?.id || user?._id || 'mock', 
-              skills: subjectsArray, 
+              student_id: user?.id || user?._id || 'mock', 
+              exam_id: null,
+              mentor_id: null,
+              domain: subjectsQuery, 
               questions: testData?.questions || [], 
               answers: answersRef.current,
-              timeTakenSeconds: timeTaken,
-              auto_submitted: false,
-              violation_log: violationLog
+              time_taken_seconds: timeTaken,
+              violation_count: violations,
+              auto_submitted: false
             })
           });
           const data = await res.json();
-          setStatus({ success: data.verified, message: data.evaluationResult?.message || 'Evaluated!' });
-          setEvaluationData(data.evaluationResult);
-          if (data.verified && data.user) localStorage.setItem('user', JSON.stringify(data.user));
+          if (data.user) localStorage.setItem('user', JSON.stringify(data.user));
+          
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
+          
+          navigate(`/result/${data.result_id}`);
         } catch { setStatus({ success: false, message: 'Auto-submit error.' }); }
         finally { setIsSubmitting(false); }
       };

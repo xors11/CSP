@@ -72,6 +72,7 @@ app.use('/api/mentors',       require('./routes/mentors'));
 app.use('/api/sessions',      require('./routes/sessions'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/doubts',        require('./routes/doubt'));
+app.use('/api/results',       require('./routes/results'));
 
 // ─── Socket.IO ───────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
